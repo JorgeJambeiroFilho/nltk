@@ -44,7 +44,7 @@ from nltk.grammar import PCFG, Nonterminal
 from nltk.parse.api import ParserI
 from nltk.parse.chart import AbstractChartRule, Chart, LeafEdge, TreeEdge
 from nltk.tree import ProbabilisticTree, Tree
-
+import heapq
 
 # Probabilistic edges
 class ProbabilisticLeafEdge(LeafEdge):
@@ -79,20 +79,50 @@ class ProbabilisticBottomUpInitRule(AbstractChartRule):
             if chart.insert(new_edge, ()):
                 yield new_edge
 
+countApply = 0
+countApplyProd = 0
+countApplyEdge = 0
 
 class ProbabilisticBottomUpPredictRule(AbstractChartRule):
     NUM_EDGES = 1
 
-    def apply(self, chart, grammar, edge):
+
+    def apply_old(self, chart, grammar, edge, indexed_productions):
+        global countApply, countApplyProd, countApplyEdge
         if edge.is_incomplete():
             return
+        countApply +=1
         for prod in grammar.productions():
-            if edge.lhs() == prod.rhs()[0]:
+            countApplyProd += 1
+            if len(prod.rhs()) > 0 and edge.lhs() == prod.rhs()[0]:
+                countApplyEdge += 1
                 new_edge = ProbabilisticTreeEdge.from_production(
                     prod, edge.start(), prod.prob()
                 )
                 if chart.insert(new_edge, ()):
                     yield new_edge
+
+    def apply(self, chart, grammar, edge, indexed_productions):
+        global countApply, countApplyProd, countApplyEdge
+        if edge.is_incomplete():
+            return
+
+        els = edge.lhs()
+        if els not in indexed_productions:
+            matching_prods = []
+        else:
+            matching_prods = indexed_productions[els]
+        countApply += 1
+        for prod in matching_prods:
+            countApplyProd += 1
+            if len(prod.rhs()) > 0 and edge.lhs() == prod.rhs()[0]:
+                countApplyEdge += 1
+                new_edge = ProbabilisticTreeEdge.from_production(
+                    prod, edge.start(), prod.prob()
+                )
+                if chart.insert(new_edge, ()):
+                    yield new_edge
+
 
 
 class ProbabilisticFundamentalRule(AbstractChartRule):
@@ -200,6 +230,14 @@ class BottomUpProbabilisticChartParser(ParserI):
         self._grammar = grammar
         self.beam_size = beam_size
         self._trace = trace
+        self._indexedproductions = {}
+        for prod in grammar.productions():
+            if len(prod.rhs()) > 0:
+                i = prod.rhs()[0]
+                if i in self._indexedproductions:
+                    self._indexedproductions[i].append(prod)
+                else:
+                    self._indexedproductions[i] = [prod]
 
     def grammar(self):
         return self._grammar
@@ -218,7 +256,7 @@ class BottomUpProbabilisticChartParser(ParserI):
         self._trace = trace
 
     # TODO: change this to conform more with the standard ChartParser
-    def parse(self, tokens):
+    def parse_old(self, tokens):
         self._grammar.check_coverage(tokens)
         chart = Chart(list(tokens))
         grammar = self._grammar
@@ -256,9 +294,12 @@ class BottomUpProbabilisticChartParser(ParserI):
                     % (chart.pretty_format_edge(edge, width=2), edge.prob())
                 )
 
+
             # Apply BU & FR to it.
-            queue.extend(bu.apply(chart, grammar, edge))
-            queue.extend(fr.apply(chart, grammar, edge))
+            bue = bu.apply(chart, grammar, edge)
+            queue.extend(bue)
+            fre = fr.apply(chart, grammar, edge)
+            queue.extend(fre)
 
         # Get a list of complete parses.
         parses = list(chart.parses(grammar.start(), ProbabilisticTree))
@@ -274,6 +315,68 @@ class BottomUpProbabilisticChartParser(ParserI):
         parses.sort(reverse=True, key=lambda tree: tree.prob())
 
         return iter(parses)
+
+    # TODO: change this to conform more with the standard ChartParser
+    def parse(self, tokens):
+        self._grammar.check_coverage(tokens)
+        chart = Chart(list(tokens))
+        grammar = self._grammar
+
+        # Chart parser rules.
+        bu_init = ProbabilisticBottomUpInitRule()
+        bu = ProbabilisticBottomUpPredictRule()
+        fr = SingleEdgeProbabilisticFundamentalRule()
+
+        # Our queue
+        queue = []
+
+        # Initialize the chart.
+        for edge in bu_init.apply(chart, grammar):
+            if self._trace > 1:
+                print(
+                    "  %-50s [%s]"
+                    % (chart.pretty_format_edge(edge, width=2), edge.prob())
+                )
+            heapq.heappush(queue,(edge.prob(),edge))
+
+        while len(queue) > 0:
+
+            # Prune the queue to the correct size if a beam was defined
+            if self.beam_size:
+                self._prune(queue, chart)
+
+            # Get the best edge.
+            edge = heapq.heappop(queue)[1]
+            if self._trace > 0:
+                print(
+                    "  %-50s [%s]"
+                    % (chart.pretty_format_edge(edge, width=2), edge.prob())
+                )
+
+
+            # Apply BU & FR to it.
+            bue = bu.apply(chart, grammar, edge, self._indexedproductions)
+            for ee in bue:
+                heapq.heappush(queue, (ee.prob(),ee))
+            fre = fr.apply(chart, grammar, edge)
+            for ee in fre:
+                heapq.heappush(queue,(ee.prob(),ee))
+
+        # Get a list of complete parses.
+        parses = list(chart.parses(grammar.start(), ProbabilisticTree))
+
+        # Assign probabilities to the trees.
+        prod_probs = {}
+        for prod in grammar.productions():
+            prod_probs[prod.lhs(), prod.rhs()] = prod.prob()
+        for parse in parses:
+            self._setprob(parse, prod_probs)
+
+        # Sort by probability
+        parses.sort(reverse=True, key=lambda tree: tree.prob())
+
+        return iter(parses)
+
 
     def _setprob(self, tree, prod_probs):
         if tree.prob() is not None:
