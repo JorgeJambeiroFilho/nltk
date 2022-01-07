@@ -322,6 +322,8 @@ class BottomUpProbabilisticChartParser(ParserI):
         chart = Chart(list(tokens))
         grammar = self._grammar
 
+        tieBreaker = 0
+
         # Chart parser rules.
         bu_init = ProbabilisticBottomUpInitRule()
         bu = ProbabilisticBottomUpPredictRule()
@@ -337,7 +339,8 @@ class BottomUpProbabilisticChartParser(ParserI):
                     "  %-50s [%s]"
                     % (chart.pretty_format_edge(edge, width=2), edge.prob())
                 )
-            heapq.heappush(queue,(edge.prob(),edge))
+            heapq.heappush(queue,(-edge.prob(),tieBreaker,edge))
+            tieBreaker += 1
 
         while len(queue) > 0:
 
@@ -346,7 +349,7 @@ class BottomUpProbabilisticChartParser(ParserI):
                 self._prune(queue, chart)
 
             # Get the best edge.
-            edge = heapq.heappop(queue)[1]
+            edge = heapq.heappop(queue)[2]
             if self._trace > 0:
                 print(
                     "  %-50s [%s]"
@@ -357,10 +360,12 @@ class BottomUpProbabilisticChartParser(ParserI):
             # Apply BU & FR to it.
             bue = bu.apply(chart, grammar, edge, self._indexedproductions)
             for ee in bue:
-                heapq.heappush(queue, (ee.prob(),ee))
+                heapq.heappush(queue, (-ee.prob(),tieBreaker,ee))
+                tieBreaker += 1
             fre = fr.apply(chart, grammar, edge)
             for ee in fre:
-                heapq.heappush(queue,(ee.prob(),ee))
+                heapq.heappush(queue,(-ee.prob(),tieBreaker,ee))
+                tieBreaker += 1
 
         # Get a list of complete parses.
         parses = list(chart.parses(grammar.start(), ProbabilisticTree))
