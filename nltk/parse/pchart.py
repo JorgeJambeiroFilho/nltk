@@ -87,7 +87,7 @@ class ProbabilisticBottomUpPredictRule(AbstractChartRule):
     NUM_EDGES = 1
 
 
-    def apply_old(self, chart, grammar, edge, indexed_productions):
+    def apply_old(self, chart, grammar, edge):
         global countApply, countApplyProd, countApplyEdge
         if edge.is_incomplete():
             return
@@ -102,8 +102,11 @@ class ProbabilisticBottomUpPredictRule(AbstractChartRule):
                 if chart.insert(new_edge, ()):
                     yield new_edge
 
-    def apply(self, chart, grammar, edge, indexed_productions):
+    def apply(self, chart, grammar, edge):
         global countApply, countApplyProd, countApplyEdge
+
+        indexed_productions = grammar.get_first_constituent_indexed_productions()
+
         if edge.is_incomplete():
             return
 
@@ -183,6 +186,18 @@ class SingleEdgeProbabilisticFundamentalRule(AbstractChartRule):
         return "Fundamental Rule"
 
 
+class ParseQueueElement:
+
+    def __init__(self,edge):
+        self.edge = edge
+
+    def __lt__(self, other):
+        raise NotImplementedError()
+
+    def __eq__(self, other):
+        raise NotImplementedError()
+
+
 class BottomUpProbabilisticChartParser(ParserI):
     """
     An abstract bottom-up parser for ``PCFG`` grammars that uses a ``Chart`` to
@@ -230,14 +245,6 @@ class BottomUpProbabilisticChartParser(ParserI):
         self._grammar = grammar
         self.beam_size = beam_size
         self._trace = trace
-        self._indexedproductions = {}
-        for prod in grammar.productions():
-            if len(prod.rhs()) > 0:
-                i = prod.rhs()[0]
-                if i in self._indexedproductions:
-                    self._indexedproductions[i].append(prod)
-                else:
-                    self._indexedproductions[i] = [prod]
 
     def grammar(self):
         return self._grammar
@@ -255,69 +262,11 @@ class BottomUpProbabilisticChartParser(ParserI):
         """
         self._trace = trace
 
-    # TODO: change this to conform more with the standard ChartParser
-    def parse_old(self, tokens):
-        self._grammar.check_coverage(tokens)
-        chart = Chart(list(tokens))
-        grammar = self._grammar
-
-        # Chart parser rules.
-        bu_init = ProbabilisticBottomUpInitRule()
-        bu = ProbabilisticBottomUpPredictRule()
-        fr = SingleEdgeProbabilisticFundamentalRule()
-
-        # Our queue
-        queue = []
-
-        # Initialize the chart.
-        for edge in bu_init.apply(chart, grammar):
-            if self._trace > 1:
-                print(
-                    "  %-50s [%s]"
-                    % (chart.pretty_format_edge(edge, width=2), edge.prob())
-                )
-            queue.append(edge)
-
-        while len(queue) > 0:
-            # Re-sort the queue.
-            self.sort_queue(queue, chart)
-
-            # Prune the queue to the correct size if a beam was defined
-            if self.beam_size:
-                self._prune(queue, chart)
-
-            # Get the best edge.
-            edge = queue.pop()
-            if self._trace > 0:
-                print(
-                    "  %-50s [%s]"
-                    % (chart.pretty_format_edge(edge, width=2), edge.prob())
-                )
+    def build_queue_element(self, edge) -> ParseQueueElement:
+        raise NotImplementedError()
 
 
-            # Apply BU & FR to it.
-            bue = bu.apply(chart, grammar, edge)
-            queue.extend(bue)
-            fre = fr.apply(chart, grammar, edge)
-            queue.extend(fre)
-
-        # Get a list of complete parses.
-        parses = list(chart.parses(grammar.start(), ProbabilisticTree))
-
-        # Assign probabilities to the trees.
-        prod_probs = {}
-        for prod in grammar.productions():
-            prod_probs[prod.lhs(), prod.rhs()] = prod.prob()
-        for parse in parses:
-            self._setprob(parse, prod_probs)
-
-        # Sort by probability
-        parses.sort(reverse=True, key=lambda tree: tree.prob())
-
-        return iter(parses)
-
-    # TODO: change this to conform more with the standard ChartParser
-    def parse(self, tokens):
+    def parse_old2(self, tokens):
         self._grammar.check_coverage(tokens)
         chart = Chart(list(tokens))
         grammar = self._grammar
@@ -358,14 +307,170 @@ class BottomUpProbabilisticChartParser(ParserI):
 
 
             # Apply BU & FR to it.
-            bue = bu.apply(chart, grammar, edge, self._indexedproductions)
+            bue = bu.apply(chart, grammar, edge)
             for ee in bue:
+                if self._trace > 4:
+                    print(
+                        "            BU    %-50s [%s]"
+                        % (chart.pretty_format_edge(ee, width=2), ee.prob())
+                    )
                 heapq.heappush(queue, (-ee.prob(),tieBreaker,ee))
                 tieBreaker += 1
             fre = fr.apply(chart, grammar, edge)
             for ee in fre:
+                if self._trace > 4:
+                    print(
+                        "            FR    %-50s [%s]"
+                        % (chart.pretty_format_edge(ee, width=2), ee.prob())
+                    )
                 heapq.heappush(queue,(-ee.prob(),tieBreaker,ee))
                 tieBreaker += 1
+
+        # Get a list of complete parses.
+        parses = list(chart.parses(grammar.start(), ProbabilisticTree))
+
+        # Assign probabilities to the trees.
+        prod_probs = {}
+        for prod in grammar.productions():
+            prod_probs[prod.lhs(), prod.rhs()] = prod.prob()
+        for parse in parses:
+            self._setprob(parse, prod_probs)
+
+        # Sort by probability
+        parses.sort(reverse=True, key=lambda tree: tree.prob())
+
+        return iter(parses)
+
+    def parse_old3(self, tokens):
+        self._grammar.check_coverage(tokens)
+        chart = Chart(list(tokens))
+        grammar = self._grammar
+
+
+        # Chart parser rules.
+        bu_init = ProbabilisticBottomUpInitRule()
+        bu = ProbabilisticBottomUpPredictRule()
+        fr = SingleEdgeProbabilisticFundamentalRule()
+
+        # Our queue
+        queue = []
+
+        # Initialize the chart.
+        for edge in bu_init.apply(chart, grammar):
+            if self._trace > 1:
+                print(
+                    "  %-50s [%s]"
+                    % (chart.pretty_format_edge(edge, width=2), edge.prob())
+                )
+            heapq.heappush(queue,self.build_queue_element(edge))
+
+        while len(queue) > 0:
+
+            # Prune the queue to the correct size if a beam was defined
+            if self.beam_size:
+                self._prune(queue, chart)
+
+            # Get the best edge.
+            edge = heapq.heappop(queue).edge
+            if self._trace > 0:
+                print(
+                    "  %-50s [%s]"
+                    % (chart.pretty_format_edge(edge, width=2), edge.prob())
+                )
+
+
+            # Apply BU & FR to it.
+            bue = bu.apply(chart, grammar, edge)
+            for ee in bue:
+                if self._trace > 4:
+                    print(
+                        "            BU    %-50s [%s]"
+                        % (chart.pretty_format_edge(ee, width=2), ee.prob())
+                    )
+                heapq.heappush(queue, self.build_queue_element(ee))
+            fre = fr.apply(chart, grammar, edge)
+            for ee in fre:
+                if self._trace > 4:
+                    print(
+                        "            FR    %-50s [%s]"
+                        % (chart.pretty_format_edge(ee, width=2), ee.prob())
+                    )
+                heapq.heappush(queue, self.build_queue_element(ee))
+
+        # Get a list of complete parses.
+        parses = list(chart.parses(grammar.start(), ProbabilisticTree))
+
+        # Assign probabilities to the trees.
+        prod_probs = {}
+        for prod in grammar.productions():
+            prod_probs[prod.lhs(), prod.rhs()] = prod.prob()
+        for parse in parses:
+            self._setprob(parse, prod_probs)
+
+        # Sort by probability
+        parses.sort(reverse=True, key=lambda tree: tree.prob())
+
+        return iter(parses)
+
+    def parse(self, tokens):
+        self._grammar.check_coverage(tokens)
+        chart = Chart(list(tokens))
+        grammar = self._grammar
+
+
+        # Chart parser rules.
+        bu_init = ProbabilisticBottomUpInitRule()
+        bu = ProbabilisticBottomUpPredictRule()
+        fr = SingleEdgeProbabilisticFundamentalRule()
+
+        # Our queue
+        queue = []
+
+        # Initialize the chart.
+        for edge in bu_init.apply(chart, grammar):
+            if self._trace > 1:
+                print(
+                    "  %-50s [%s]"
+                    % (chart.pretty_format_edge(edge, width=2), edge.prob())
+                )
+            heapq.heappush(queue,self.build_queue_element(edge))
+
+        while len(queue) > 0:
+
+            # Prune the queue to the correct size if a beam was defined
+            if self.beam_size:
+                self._prune(queue, chart)
+
+            # Get the best edge.
+            edge = heapq.heappop(queue).edge
+
+            if edge.start == 0 and edge.end == self._num_leaves and edge.lhs() == grammar.start():
+                print("FOUND COMPLETE PARSE")
+
+            if self._trace > 0:
+                print(
+                    "  %-50s [%s]"
+                    % (chart.pretty_format_edge(edge, width=2), edge.prob())
+                )
+
+
+            # Apply BU & FR to it.
+            bue = bu.apply(chart, grammar, edge)
+            for ee in bue:
+                if self._trace > 4:
+                    print(
+                        "            BU    %-50s [%s]"
+                        % (chart.pretty_format_edge(ee, width=2), ee.prob())
+                    )
+                heapq.heappush(queue, self.build_queue_element(ee))
+            fre = fr.apply(chart, grammar, edge)
+            for ee in fre:
+                if self._trace > 4:
+                    print(
+                        "            FR    %-50s [%s]"
+                        % (chart.pretty_format_edge(ee, width=2), ee.prob())
+                    )
+                heapq.heappush(queue, self.build_queue_element(ee))
 
         # Get a list of complete parses.
         parses = list(chart.parses(grammar.start(), ProbabilisticTree))
@@ -433,6 +538,31 @@ class BottomUpProbabilisticChartParser(ParserI):
             del queue[:split]
 
 
+tie_breaker = 0
+def get_tiebreaker():
+    global tie_breaker
+    tie_breaker += 1
+    return tie_breaker
+
+
+class ProbabilityChartParseQueueElement(ParseQueueElement):
+
+    def __init__(self,edge):
+        super().__init__(edge)
+        self.tie_breaker = get_tiebreaker()
+        #self._key = (-edge.prob(), tieBreaker)
+
+    def __lt__(self, other):
+        if self.edge.prob() > other.edge.prob():
+            return True
+        if self.tie_breaker < other.tie_breaker:
+            return True
+        return False
+
+    def __eq__(self, other):
+        return self.edge.prob() == other.edge.prob() and self.tie_breaker == other.tie_breaker
+
+
 class InsideChartParser(BottomUpProbabilisticChartParser):
     """
     A bottom-up parser for ``PCFG`` grammars that tries edges in descending
@@ -467,6 +597,10 @@ class InsideChartParser(BottomUpProbabilisticChartParser):
         """
         queue.sort(key=lambda edge: edge.prob())
 
+    def build_queue_element(self, edge) -> ParseQueueElement:
+        return ProbabilityChartParseQueueElement(edge)
+
+
 
 # Eventually, this will become some sort of inside-outside parser:
 # class InsideOutsideParser(BottomUpProbabilisticChartParser):
@@ -495,6 +629,24 @@ class InsideChartParser(BottomUpProbabilisticChartParser):
 #     def sort_queue(self, queue, chart):
 #         queue.sort(key=self._sortkey)
 
+class RandomChartParseQueueElement(ParseQueueElement):
+
+    def __init__(self,edge):
+        super().__init__(edge)
+        self.tie_breaker = get_tiebreaker()
+
+        self._key = random.random()
+
+    def __lt__(self, other):
+        if self._key > other._key:
+            return True
+        if self.tie_breaker < other.tie-tie_breaker:
+            return True
+        return False
+
+    def __eq__(self, other):
+        return self._key == other._key and self.tie_breaker == other.tie_breaker
+
 
 class RandomChartParser(BottomUpProbabilisticChartParser):
     """
@@ -507,6 +659,24 @@ class RandomChartParser(BottomUpProbabilisticChartParser):
         i = random.randint(0, len(queue) - 1)
         (queue[-1], queue[i]) = (queue[i], queue[-1])
 
+    def build_queue_element(self, edge) -> ParseQueueElement:
+        return RandomChartParseQueueElement(edge)
+
+
+class ChronologicalChartParseQueueElement(ParseQueueElement):
+
+    def __init__(self,edge):
+        super().__init__(edge)
+        self.tie_breaker = get_tiebreaker()
+
+    def __lt__(self, other):
+        if self.tie_breaker < other.tie-tie_breaker:
+            return True
+        return False
+
+    def __eq__(self, other):
+        return self.tie_breaker == other.tie_breaker
+
 
 class UnsortedChartParser(BottomUpProbabilisticChartParser):
     """
@@ -517,6 +687,25 @@ class UnsortedChartParser(BottomUpProbabilisticChartParser):
     def sort_queue(self, queue, chart):
         return
 
+    def build_queue_element(self, edge) -> ParseQueueElement:
+        return ChronologicalChartParseQueueElement(edge)
+
+class LengthChartParseQueueElement(ParseQueueElement):
+
+    def __init__(self,edge):
+        super().__init__(edge)
+        self.tie_breaker = get_tiebreaker()
+        #self._key = (-edge.prob(), tieBreaker)
+
+    def __lt__(self, other):
+        if self.edge.length() > other.edge.length():
+            return True
+        if self.tie_breaker < other.tie_breaker:
+            return True
+        return False
+
+    def __eq__(self, other):
+        return self.edge.length() == other.edge.length() and self.tie_breaker == other.tie_breaker
 
 class LongestChartParser(BottomUpProbabilisticChartParser):
     """
@@ -528,6 +717,9 @@ class LongestChartParser(BottomUpProbabilisticChartParser):
     # Inherit constructor
     def sort_queue(self, queue, chart):
         queue.sort(key=lambda edge: edge.length())
+
+    def build_queue_element(self, edge) -> ParseQueueElement:
+        return LengthChartParseQueueElement(edge)
 
 
 ##//////////////////////////////////////////////////////

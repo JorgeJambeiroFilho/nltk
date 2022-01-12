@@ -478,6 +478,19 @@ class CFG:
         self._calculate_grammar_forms()
         if calculate_leftcorners:
             self._calculate_leftcorners()
+        self._first_constituent_indexed_productions = None
+
+    def get_first_constituent_indexed_productions(self):
+        if self._first_constituent_indexed_productions is None:
+            self._first_constituent_indexed_productions = {}
+            for prod in self.productions():
+                if len(prod.rhs()) > 0:
+                    i = prod.rhs()[0]
+                    if i in self._first_constituent_indexed_productions:
+                        self._first_constituent_indexed_productions[i].append(prod)
+                    else:
+                        self._first_constituent_indexed_productions[i] = [prod]
+        return self._first_constituent_indexed_productions
 
     def _calculate_indexes(self):
         self._lhs_index = {}
