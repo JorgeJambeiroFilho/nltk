@@ -83,6 +83,16 @@ countApply = 0
 countApplyProd = 0
 countApplyEdge = 0
 
+def getCountApply():
+    return countApply
+
+def getCountApplyProd():
+    return countApplyProd
+
+def getCountApplyEdge():
+    return countApplyEdge
+
+
 class ProbabilisticBottomUpPredictRule(AbstractChartRule):
     NUM_EDGES = 1
 
@@ -91,7 +101,7 @@ class ProbabilisticBottomUpPredictRule(AbstractChartRule):
         global countApply, countApplyProd, countApplyEdge
         if edge.is_incomplete():
             return
-        countApply +=1
+        countApply += 1
         for prod in grammar.productions():
             countApplyProd += 1
             if len(prod.rhs()) > 0 and edge.lhs() == prod.rhs()[0]:
@@ -417,6 +427,9 @@ class BottomUpProbabilisticChartParser(ParserI):
         chart = Chart(list(tokens))
         grammar = self._grammar
 
+        prod_probs = {}
+        for prod in grammar.productions():
+            prod_probs[prod.lhs(), prod.rhs()] = prod.prob()
 
         # Chart parser rules.
         bu_init = ProbabilisticBottomUpInitRule()
@@ -444,8 +457,15 @@ class BottomUpProbabilisticChartParser(ParserI):
             # Get the best edge.
             edge = heapq.heappop(queue).edge
 
-            if edge.start == 0 and edge.end == self._num_leaves and edge.lhs() == grammar.start():
+            if edge.start() == 0 and edge.end() == chart._num_leaves and edge.lhs() == grammar.start() and edge.is_complete():
                 print("FOUND COMPLETE PARSE")
+                # Get a list of complete parses.
+                parses = chart.trees(edge, tree_class=ProbabilisticTree, complete=True)
+                parses = list(parses)
+                # Assign probabilities to the trees.
+                for parse in parses:
+                    self._setprob(parse, prod_probs)
+                    yield parse
 
             if self._trace > 0:
                 print(
@@ -472,20 +492,6 @@ class BottomUpProbabilisticChartParser(ParserI):
                     )
                 heapq.heappush(queue, self.build_queue_element(ee))
 
-        # Get a list of complete parses.
-        parses = list(chart.parses(grammar.start(), ProbabilisticTree))
-
-        # Assign probabilities to the trees.
-        prod_probs = {}
-        for prod in grammar.productions():
-            prod_probs[prod.lhs(), prod.rhs()] = prod.prob()
-        for parse in parses:
-            self._setprob(parse, prod_probs)
-
-        # Sort by probability
-        parses.sort(reverse=True, key=lambda tree: tree.prob())
-
-        return iter(parses)
 
 
     def _setprob(self, tree, prod_probs):
