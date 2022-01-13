@@ -404,7 +404,7 @@ class ProbabilisticProduction(Production, ImmutableProbabilisticMixIn):
     :see: ``Production``
     """
 
-    def __init__(self, lhs, rhs, **prob):
+    def __init__(self, lhs, rhs, lhs_freq, rule_freq, **prob):
         """
         Construct a new ``ProbabilisticProduction``.
 
@@ -416,10 +416,13 @@ class ProbabilisticProduction(Production, ImmutableProbabilisticMixIn):
         """
         ImmutableProbabilisticMixIn.__init__(self, **prob)
         Production.__init__(self, lhs, rhs)
+        self.lhs_freq = lhs_freq
+        self.rule_freq = rule_freq
 
     def __str__(self):
         return super().__str__() + (
-            " [1.0]" if (self.prob() == 1.0) else " [%g]" % self.prob()
+            #" [1.0]" if (self.prob() == 1.0) else " [%g]" % self.prob()
+            " [%g; %g; %g]" % (self.prob(), self.lhs_freq, self.rule_freq)
         )
 
     def __eq__(self, other):
@@ -1295,7 +1298,7 @@ def induce_pcfg(start, productions):
         pcount[prod] = pcount.get(prod, 0) + 1
 
     prods = [
-        ProbabilisticProduction(p.lhs(), p.rhs(), prob=pcount[p] / lcount[p.lhs()])
+        ProbabilisticProduction(p.lhs(), p.rhs(), lhs_freq=lcount[p.lhs()], rule_freq=pcount[p], prob=pcount[p] / lcount[p.lhs()])
         for p in pcount
     ]
     return PCFG(start, prods)
@@ -1330,7 +1333,8 @@ def _read_fcfg_production(input, fstruct_reader):
 # Parsing generic grammars
 
 _ARROW_RE = re.compile(r"\s* -> \s*", re.VERBOSE)
-_PROBABILITY_RE = re.compile(r"( \[ [\d\.]+ \] ) \s*", re.VERBOSE)
+_PROBABILITY_RE = re.compile(r"( \[[\d\.]+(?:; [\d\.]+)*\] )\s*")
+#_PROBABILITY_RE = re.compile(r"( \[ [\d\.]+ \] ) \s*", re.VERBOSE)
 _TERMINAL_RE = re.compile(r'( "[^"]*" | \'[^\']*\' ) \s*', re.VERBOSE)
 _DISJUNCTION_RE = re.compile(r"\| \s*", re.VERBOSE)
 
@@ -1353,13 +1357,22 @@ def _read_production(line, nonterm_parser, probabilistic=False):
 
     # Parse the right hand side.
     probabilities = [0.0]
+    lhs_freqs = [0]
+    rule_freqs = [0]
     rhsides = [[]]
     while pos < len(line):
         # Probability.
         m = _PROBABILITY_RE.match(line, pos)
         if probabilistic and m:
             pos = m.end()
-            probabilities[-1] = float(m.group(1)[1:-1])
+            str_number_list = m.group(1)[2:-2]
+            numbers_list = str_number_list.split(";")
+            probabilities[-1] = float(numbers_list[0])
+            if len(numbers_list) >= 2:
+                lhs_freqs[-1] = float(numbers_list[1])
+            if len(numbers_list) >= 3:
+                rule_freqs[-1] = float(numbers_list[2])
+
             if probabilities[-1] > 1.0:
                 raise ValueError(
                     "Production probability %f, "
@@ -1378,6 +1391,8 @@ def _read_production(line, nonterm_parser, probabilistic=False):
         elif line[pos] == "|":
             m = _DISJUNCTION_RE.match(line, pos)
             probabilities.append(0.0)
+            lhs_freqs.append(0)
+            rule_freqs.append(0)
             rhsides.append([])
             pos = m.end()
 
@@ -1388,8 +1403,8 @@ def _read_production(line, nonterm_parser, probabilistic=False):
 
     if probabilistic:
         return [
-            ProbabilisticProduction(lhs, rhs, prob=probability)
-            for (rhs, probability) in zip(rhsides, probabilities)
+            ProbabilisticProduction(lhs, rhs, lhs_freq=lhs_freq, rule_freq=rule_freq, prob=probability)
+            for (rhs, probability, lhs_freq, rule_freq) in zip(rhsides, probabilities, lhs_freqs, rule_freqs)
         ]
     else:
         return [Production(lhs, rhs) for rhs in rhsides]
