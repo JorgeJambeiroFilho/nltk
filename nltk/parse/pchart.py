@@ -53,19 +53,26 @@ class ProbabilisticLeafEdge(LeafEdge):
 
 
 class ProbabilisticTreeEdge(TreeEdge):
-    def __init__(self, prob, *args, **kwargs):
+    def __init__(self, prob, lhs_prob , *args, **kwargs):
         TreeEdge.__init__(self, *args, **kwargs)
         self._prob = prob
+        self._lhs_prob = lhs_prob
         # two edges with different probabilities are not equal.
         self._comparison_key = (self._comparison_key, prob)
 
     def prob(self):
         return self._prob
 
+    def lhs_prob(self):
+        return self._lhs_prob
+
+    def total_prob(self):
+        return self._lhs_prob * self._prob
+
     @staticmethod
-    def from_production(production, index, p):
+    def from_production(production, index, p, lhs_prob):
         return ProbabilisticTreeEdge(
-            p, (index, index), production.lhs(), production.rhs(), 0
+            p, lhs_prob, (index, index), production.lhs(), production.rhs(), 0
         )
 
 
@@ -131,7 +138,7 @@ class ProbabilisticBottomUpPredictRule(AbstractChartRule):
             if len(prod.rhs()) > 0 and edge.lhs() == prod.rhs()[0]:
                 countApplyEdge += 1
                 new_edge = ProbabilisticTreeEdge.from_production(
-                    prod, edge.start(), prod.prob()
+                    prod, edge.start(), prod.prob(), prod.lhs_freq / len(grammar.productions())
                 )
                 if chart.insert(new_edge, ()):
                     yield new_edge
@@ -155,6 +162,7 @@ class ProbabilisticFundamentalRule(AbstractChartRule):
         p = left_edge.prob() * right_edge.prob()
         new_edge = ProbabilisticTreeEdge(
             p,
+            left_edge.lhs_prob(),
             span=(left_edge.start(), right_edge.end()),
             lhs=left_edge.lhs(),
             rhs=left_edge.rhs(),
