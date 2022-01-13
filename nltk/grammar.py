@@ -1242,13 +1242,19 @@ class PCFG(CFG):
         """
         CFG.__init__(self, start, productions, calculate_leftcorners)
 
+        self._total_freq = 0
         # Make sure that the probabilities sum to one.
         probs = {}
         for production in productions:
             probs[production.lhs()] = probs.get(production.lhs(), 0) + production.prob()
+            self._total_freq += production.rule_freq
+
         for (lhs, p) in probs.items():
             if not ((1 - PCFG.EPSILON) < p < (1 + PCFG.EPSILON)):
                 raise ValueError("Productions for %r do not sum to 1" % lhs)
+
+    def total_freq(self):
+        return self._total_freq
 
     @classmethod
     def fromstring(cls, input, encoding=None):

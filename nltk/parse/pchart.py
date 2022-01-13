@@ -51,6 +51,12 @@ class ProbabilisticLeafEdge(LeafEdge):
     def prob(self):
         return 1.0
 
+    def lhs_prob(self):
+        return 1.0
+
+    def total_prob(self):
+        return 1.0
+
 
 class ProbabilisticTreeEdge(TreeEdge):
     def __init__(self, prob, lhs_prob , *args, **kwargs):
@@ -138,7 +144,7 @@ class ProbabilisticBottomUpPredictRule(AbstractChartRule):
             if len(prod.rhs()) > 0 and edge.lhs() == prod.rhs()[0]:
                 countApplyEdge += 1
                 new_edge = ProbabilisticTreeEdge.from_production(
-                    prod, edge.start(), prod.prob(), prod.lhs_freq / len(grammar.productions())
+                    prod, edge.start(), prod.prob(), prod.lhs_freq / grammar.total_freq()
                 )
                 if chart.insert(new_edge, ()):
                     yield new_edge
@@ -477,8 +483,8 @@ class BottomUpProbabilisticChartParser(ParserI):
 
             if self._trace > 0:
                 print(
-                    "  %-50s [%s]"
-                    % (chart.pretty_format_edge(edge, width=2), edge.prob())
+                    "  %-50s [%s, %s, %s]"
+                    % (chart.pretty_format_edge(edge, width=2), edge.prob(), edge.lhs_prob(), edge.total_prob())
                 )
 
 
@@ -487,16 +493,16 @@ class BottomUpProbabilisticChartParser(ParserI):
             for ee in bue:
                 if self._trace > 4:
                     print(
-                        "            BU    %-50s [%s]"
-                        % (chart.pretty_format_edge(ee, width=2), ee.prob())
+                        "            BU    %-50s [%s, %s, %s]"
+                        % (chart.pretty_format_edge(ee, width=2), ee.prob(), ee.lhs_prob(), ee.total_prob())
                     )
                 heapq.heappush(queue, self.build_queue_element(ee))
             fre = fr.apply(chart, grammar, edge)
             for ee in fre:
                 if self._trace > 4:
                     print(
-                        "            FR    %-50s [%s]"
-                        % (chart.pretty_format_edge(ee, width=2), ee.prob())
+                        "            FR    %-50s [%s, %s, %s]"
+                        % (chart.pretty_format_edge(ee, width=2), ee.prob(), ee.lhs_prob(), ee.total_prob())
                     )
                 heapq.heappush(queue, self.build_queue_element(ee))
 
